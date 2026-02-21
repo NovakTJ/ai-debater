@@ -1,0 +1,15 @@
+{
+  "name": "ai-debater",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anti-sycophancy debate scaffold using Anthropic multi-agent prompting",
+  "type": "module",
+  "scripts": {
+    "debate": "node src/index.mjs",
+    "check": "node src/index.mjs --help"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.57.0",
+    "dotenv": "^16.6.1"
+  }
+}
