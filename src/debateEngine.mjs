@@ -1,6 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest";
+const VERDICT_LABELS = [
+  "Strongly agree.",
+  "Agree.",
+  "Ambivalent.",
+  "Disagree.",
+  "Strongly disagree."
+];
+const VERDICT_PREFIX = "My final verdict: ";
 
 function extractText(message) {
   return (message.content || [])
@@ -25,6 +33,47 @@ function sanitizeInput(input) {
 
 const JSON_RESPONSE_INSTRUCTION =
   "Return valid JSON only. Do not wrap in markdown fences.";
+
+function normalizeVerdictLabel(value) {
+  const text = String(value || "").trim().toLowerCase();
+
+  if (text === "strongly agree.") return "Strongly agree.";
+  if (text === "agree.") return "Agree.";
+  if (text === "ambivalent.") return "Ambivalent.";
+  if (text === "disagree.") return "Disagree.";
+  if (text === "strongly disagree.") return "Strongly disagree.";
+
+  return null;
+}
+
+function inferVerdictLabel(evaluation) {
+  const direction = String(evaluation?.recommendedDirection || "").trim();
+  const confidence = String(evaluation?.confidence || "").trim();
+
+  if (direction === "proceed" && confidence === "high") return "Strongly agree.";
+  if (direction === "proceed") return "Agree.";
+  if (direction === "do-not-proceed" && confidence === "high") return "Strongly disagree.";
+  if (direction === "do-not-proceed") return "Disagree.";
+  return "Ambivalent.";
+}
+
+function ensureVerdictSuffix(summary, verdictLabel) {
+  const text = String(summary || "").trim();
+  const suffixPattern = /\s*My final verdict:\s*(Strongly agree\.|Agree\.|Ambivalent\.|Disagree\.|Strongly disagree\.)\s*$/i;
+  const cleaned = text.replace(suffixPattern, "").trim();
+  return `${cleaned} ${VERDICT_PREFIX}${verdictLabel}`.trim();
+}
+
+function normalizeEvaluationOutput(evaluation) {
+  const normalizedLabel =
+    normalizeVerdictLabel(evaluation?.finalVerdict) || inferVerdictLabel(evaluation);
+
+  return {
+    ...evaluation,
+    finalVerdict: normalizedLabel,
+    summary: ensureVerdictSuffix(evaluation?.summary, normalizedLabel)
+  };
+}
 
 async function generateEvidenceLedger(client, model, payload) {
   const prompt = `
@@ -130,11 +179,16 @@ Output schema:
   "recommendedDirection": "proceed|do-not-proceed|defer",
   "confidence": "low|medium|high",
   "summary": "string",
+  "finalVerdict": "Strongly agree.|Agree.|Ambivalent.|Disagree.|Strongly disagree.",
   "reasoning": ["string"],
   "keyRisks": ["string"],
   "mitigations": ["string"],
   "whatWouldChangeDecision": ["string"]
 }
+
+Strict ending rule:
+- The summary must end exactly with: "My final verdict: " followed by one of:
+  "Strongly agree.", "Agree.", "Ambivalent.", "Disagree.", "Strongly disagree."
 
 ${JSON_RESPONSE_INSTRUCTION}
 `;
@@ -147,7 +201,7 @@ ${JSON_RESPONSE_INSTRUCTION}
   });
 
   const text = extractText(response);
-  return JSON.parse(text);
+  return normalizeEvaluationOutput(JSON.parse(text));
 }
 
 export async function runDebate(input, options = {}) {
